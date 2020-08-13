@@ -1,43 +1,73 @@
 use lazy_static::lazy_static;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::c_int;
 
 pub struct Modinfo(mdb_sys::mdb_modinfo_t);
 unsafe impl Sync for Modinfo {}
 
 pub struct Dcmd(mdb_sys::mdb_dcmd_t);
-unsafe impl Sync for Dcmd {}
+impl Dcmd {
+    fn new() -> Self {
+        Dcmd::default()
+    }
 
-pub struct Dcmds(Box<[mdb_sys::mdb_dcmd_t]>);
+    // XXX Ideally we would handle the str and \0 better
+    fn name(mut self, name: &'static str) -> Self {
+        self.0.dc_name = name.as_ptr() as _;
+        self
+    }
 
-impl Dcmds {
-    fn new() -> Dcmds {
-        let dcmd = mdb_sys::mdb_dcmd_t {
+    // XXX Ideally we would handle the str and \0 better
+    fn desc(mut self, desc: &'static str) -> Self {
+        self.0.dc_descr = desc.as_ptr() as _;
+        self
+    }
+
+    fn funcp(
+        mut self,
+        funcp: unsafe extern "C" fn(usize, u32, i32, *const mdb_sys::mdb_arg) -> i32,
+    ) -> Self {
+        self.0.dc_funcp = Some(funcp);
+        self
+    }
+}
+
+impl Default for Dcmd {
+    fn default() -> Self {
+        Dcmd(mdb_sys::mdb_dcmd_t {
             dc_name: std::ptr::null() as _,
             dc_usage: std::ptr::null(),
             dc_descr: std::ptr::null() as _,
             dc_funcp: None,
             dc_help: None,
             dc_tabp: None,
-        };
-        let mut list = vec![dcmd; 3].into_boxed_slice();
-        list[0] = RUSTDCMD.0;
-        Dcmds(list)
+        })
+    }
+}
+unsafe impl Sync for Dcmd {}
+
+pub struct Dcmds(Box<[mdb_sys::mdb_dcmd_t]>);
+
+impl Dcmds {
+    fn from(dcmds: &[Dcmd]) -> Dcmds {
+        let mut list: Vec<mdb_sys::mdb_dcmd_t> = dcmds.iter().map(|d| d.0).collect();
+        list.push(Dcmd::default().0);
+        Dcmds(list.into_boxed_slice())
     }
 }
 
 unsafe impl Sync for Dcmds {}
 
-pub static RUSTDCMD: Dcmd = Dcmd(mdb_sys::mdb_dcmd_t {
-    dc_name: "rust_dcmd\0".as_ptr() as *const c_char,
-    dc_usage: std::ptr::null(),
-    dc_descr: "hello from a rust mdb dcmd\0".as_ptr() as *const c_char,
-    dc_funcp: Some(hello),
-    dc_help: None,
-    dc_tabp: None,
-});
-
 lazy_static! {
-    pub static ref DCMDS: Dcmds = Dcmds::new();
+    pub static ref DCMDS: Dcmds = Dcmds::from(&[
+        Dcmd::new()
+            .name("rust_dcmd\0")
+            .desc("hello from a rust mdb dcmd\0")
+            .funcp(hello),
+        Dcmd::new()
+            .name("rprint\0")
+            .desc("print a rust type\0")
+            .funcp(hello),
+    ]);
 }
 
 lazy_static! {
